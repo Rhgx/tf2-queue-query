@@ -67,15 +67,13 @@ Save the full result:
 Show maps that currently have selections:
 
 ```powershell
-.\tf2-queue-query.exe maps |
-  jq '.[] | select(.searching > 0) | {map: .display_name, searching}'
+.\tf2-queue-query.exe maps | jq '.[] | select(.searching > 0) | {map: .display_name, searching}'
 ```
 
 Get one map:
 
 ```powershell
-.\tf2-queue-query.exe maps |
-  jq --arg map pl_badwater '.[] | select(.map_name == $map)'
+.\tf2-queue-query.exe maps | jq --arg map pl_badwater '.[] | select(.map_name == $map)'
 ```
 
 Use `--compact` if you want single-line JSON.
