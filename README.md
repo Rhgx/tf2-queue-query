@@ -75,7 +75,7 @@ Get one map:
 
 ```powershell
 .\tf2-queue-query.exe maps |
-  jq '.[] | select(.map_name == "pl_badwater")'
+  jq --arg map pl_badwater '.[] | select(.map_name == $map)'
 ```
 
 Use `--compact` if you want single-line JSON.
