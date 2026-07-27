@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version without the v prefix"
+        required: true
+        default: "0.1.0"
+
+permissions:
+  contents: write
+
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve repository toolchain
+        run: rustup show
+      - name: Verify
+        shell: pwsh
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --all-targets --locked -- -D warnings
+          cargo test --all-targets --locked
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        run: |
+          if ("${{ github.ref_type }}" -eq "tag") {
+            $version = "${{ github.ref_name }}".TrimStart("v")
+          } else {
+            $version = "${{ inputs.version }}"
+          }
+          "value=$version" >> $env:GITHUB_OUTPUT
+      - name: Package
+        shell: pwsh
+        run: .\scripts\package-release.ps1 -Version "${{ steps.version.outputs.value }}"
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tf2-queue-query-windows-x86_64
+          path: |
+            dist/*.zip
+            dist/*.sha256
+      - name: Publish GitHub release
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" dist/*.zip dist/*.sha256 `
+            --verify-tag `
+            --draft `
+            --title "TF2 Queue Query ${{ github.ref_name }}" `
+            --generate-notes

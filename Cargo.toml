@@ -1,0 +1,38 @@
+[package]
+name = "tf2-queue-query"
+version = "0.1.0"
+edition = "2024"
+description = "Query TF2's passive matchmaking map-selection statistics"
+authors = ["Rhgx"]
+license = "MIT"
+repository = "https://github.com/Rhgx/tf2-queue-query"
+homepage = "https://github.com/Rhgx/tf2-queue-query"
+documentation = "https://github.com/Rhgx/tf2-queue-query#readme"
+readme = "README.md"
+keywords = ["tf2", "steam", "matchmaking", "json", "cli"]
+categories = ["command-line-utilities", "games"]
+publish = false
+
+[dependencies]
+anyhow = "1.0"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+clap = { version = "4.5", features = ["derive"] }
+csv = "1.3"
+libloading = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+winreg = "0.55"
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_LibraryLoader",
+] }
+
+[dev-dependencies]
+tempfile = "3.15"
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+panic = "abort"
+strip = "symbols"

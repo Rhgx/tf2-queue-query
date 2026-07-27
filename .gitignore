@@ -1,0 +1,5 @@
+/target/
+/dist/
+/csv-data/
+/graphs/
+*.pdb

@@ -1,0 +1,7 @@
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.csv text eol=crlf
+*.exe binary
+*.pdb binary
+*.png binary
+*.zip binary
