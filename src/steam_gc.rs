@@ -1,7 +1,6 @@
 use std::{
     ffi::{c_char, c_void},
     fs,
-    os::windows::ffi::OsStrExt,
     path::Path,
     thread,
     time::{Duration, Instant},
@@ -9,6 +8,10 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use libloading::Library;
+
+#[cfg(target_os = "windows")]
+use std::os::windows::ffi::OsStrExt;
+#[cfg(target_os = "windows")]
 use windows_sys::Win32::{
     Foundation::{CloseHandle, INVALID_HANDLE_VALUE},
     System::Diagnostics::ToolHelp::{
@@ -31,10 +34,23 @@ type SteamApiShutdown = unsafe extern "C" fn();
 type SteamApiRunCallbacks = unsafe extern "C" fn();
 type SteamApiGetHSteamUser = unsafe extern "C" fn() -> i32;
 type SteamFindUserInterface = unsafe extern "C" fn(i32, *const c_char) -> *mut c_void;
+
+#[cfg(target_os = "windows")]
 type GcSendMessage = unsafe extern "system" fn(*mut c_void, u32, *const c_void, u32) -> i32;
+#[cfg(target_os = "linux")]
+type GcSendMessage = unsafe extern "C" fn(*mut c_void, u32, *const c_void, u32) -> i32;
+
+#[cfg(target_os = "windows")]
 type GcIsMessageAvailable = unsafe extern "system" fn(*mut c_void, *mut u32) -> bool;
+#[cfg(target_os = "linux")]
+type GcIsMessageAvailable = unsafe extern "C" fn(*mut c_void, *mut u32) -> bool;
+
+#[cfg(target_os = "windows")]
 type GcRetrieveMessage =
     unsafe extern "system" fn(*mut c_void, *mut u32, *mut c_void, u32, *mut u32) -> i32;
+#[cfg(target_os = "linux")]
+type GcRetrieveMessage =
+    unsafe extern "C" fn(*mut c_void, *mut u32, *mut c_void, u32, *mut u32) -> i32;
 
 struct SteamApi {
     _library: Library,
@@ -63,12 +79,13 @@ struct GameCoordinator {
 }
 
 fn symbol<T: Copy>(library: &Library, name: &[u8]) -> Result<T> {
-    // SAFETY: Callers provide the exact ABI/signature exported by steam_api64.dll.
+    // SAFETY: Callers provide the exact ABI/signature exported by the Steam API library.
     unsafe { library.get::<T>(name) }
         .map(|value| *value)
         .with_context(|| format!("Steam export {} is missing", String::from_utf8_lossy(name)))
 }
 
+#[cfg(target_os = "windows")]
 fn load_api(tf2_root: &Path) -> Result<(SteamApi, SteamApiInit)> {
     let bin = tf2_root.join("bin").join("x64");
     let dll = bin.join("steam_api64.dll");
@@ -93,6 +110,47 @@ fn load_api(tf2_root: &Path) -> Result<(SteamApi, SteamApiInit)> {
     // SAFETY: The path was validated as the installed TF2 Steam API library.
     let library = unsafe { Library::new(&dll) }
         .with_context(|| format!("could not load {}", dll.display()))?;
+    let init = symbol::<SteamApiInit>(&library, b"SteamAPI_Init\0")?;
+    let api = SteamApi {
+        initialized: false,
+        shutdown: symbol(&library, b"SteamAPI_Shutdown\0")?,
+        run_callbacks: symbol(&library, b"SteamAPI_RunCallbacks\0")?,
+        get_user: symbol(&library, b"SteamAPI_GetHSteamUser\0")?,
+        find_user_interface: symbol(&library, b"SteamInternal_FindOrCreateUserInterface\0")?,
+        _library: library,
+    };
+    Ok((api, init))
+}
+
+#[cfg(target_os = "linux")]
+fn load_api(tf2_root: &Path) -> Result<(SteamApi, SteamApiInit)> {
+    let bin = tf2_root.join("bin").join("linux64");
+    let so = bin.join("libsteam_api.so");
+    // These process-global settings are deliberately left in place: this is a
+    // short-lived, single-purpose CLI that exits immediately after one query.
+    // SAFETY: Modifying this process's environment occurs before worker threads
+    // are started and is required for SteamAPI to select app 440.
+    unsafe {
+        std::env::set_var("SteamAppId", "440");
+        std::env::set_var("SteamGameId", "440");
+    }
+    // Make sibling libraries in the TF2 bin dir discoverable, mirroring the
+    // lookup behavior used by TF2's own loader. It intentionally remains set
+    // until this short-lived process exits.
+    let mut library_path = bin.as_os_str().to_os_string();
+    if let Some(existing) = std::env::var_os("LD_LIBRARY_PATH")
+        && !existing.is_empty()
+    {
+        library_path.push(":");
+        library_path.push(existing);
+    }
+    // SAFETY: Modifying this process's environment occurs before worker threads
+    // are started and is required for libsteam_api.so to find its siblings.
+    unsafe { std::env::set_var("LD_LIBRARY_PATH", library_path) };
+
+    // SAFETY: The path was validated as the installed TF2 Steam API library.
+    let library =
+        unsafe { Library::new(&so) }.with_context(|| format!("could not load {}", so.display()))?;
     let init = symbol::<SteamApiInit>(&library, b"SteamAPI_Init\0")?;
     let api = SteamApi {
         initialized: false,
@@ -207,6 +265,7 @@ fn client_version(tf2_root: &Path) -> Result<u32> {
         .context("ClientVersion is not an unsigned integer")
 }
 
+#[cfg(target_os = "windows")]
 pub fn tf2_is_running() -> bool {
     // SAFETY: Snapshot handle is closed below, and PROCESSENTRY32W is initialized as
     // required by ToolHelp.
@@ -241,6 +300,23 @@ pub fn tf2_is_running() -> bool {
         CloseHandle(snapshot);
         found
     }
+}
+
+#[cfg(target_os = "linux")]
+pub fn tf2_is_running() -> bool {
+    // SAFETY: None. Scans /proc for the Linux TF2 client process name.
+    let Ok(entries) = fs::read_dir("/proc") else {
+        return false;
+    };
+    entries.filter_map(Result::ok).any(|entry| {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.chars().all(|character| character.is_ascii_digit()) {
+            return false;
+        }
+        let comm = fs::read_to_string(entry.path().join("comm")).unwrap_or_default();
+        comm.trim() == "tf_linux64"
+    })
 }
 
 /// Sends one passive stats request and returns the raw message 6525 body.

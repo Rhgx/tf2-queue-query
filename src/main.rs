@@ -1,8 +1,8 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 #![warn(clippy::pedantic)]
 
-#[cfg(not(target_os = "windows"))]
-compile_error!("tf2-queue-query currently supports Windows x64 only");
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
+compile_error!("tf2-queue-query currently supports Windows x64 and Linux x86_64 only");
 
 mod catalog;
 mod discovery;

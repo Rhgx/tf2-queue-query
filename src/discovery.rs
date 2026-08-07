@@ -4,8 +4,11 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
+
+#[cfg(target_os = "windows")]
 use winreg::{RegKey, enums::HKEY_CURRENT_USER};
 
+#[cfg(target_os = "windows")]
 fn steam_root_from_registry() -> Option<PathBuf> {
     let current_user = RegKey::predef(HKEY_CURRENT_USER);
     let steam = current_user.open_subkey(r"Software\Valve\Steam").ok()?;
@@ -13,6 +16,17 @@ fn steam_root_from_registry() -> Option<PathBuf> {
         .get_value::<String, _>("SteamPath")
         .ok()
         .map(PathBuf::from)
+}
+
+#[cfg(target_os = "linux")]
+fn steam_root_from_filesystem() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    [
+        PathBuf::from(&home).join(".local/share/Steam"),
+        PathBuf::from(&home).join(".steam/steam"),
+    ]
+    .into_iter()
+    .find(|root| root.join("steamapps").join("libraryfolders.vdf").is_file())
 }
 
 fn quoted_values(text: &str) -> Vec<String> {
@@ -62,7 +76,11 @@ pub fn find_tf2_root(explicit: Option<PathBuf>) -> Result<PathBuf> {
     if let Some(path) = explicit {
         return validate_tf2_root(&path);
     }
-    if let Some(steam_root) = steam_root_from_registry() {
+    #[cfg(target_os = "windows")]
+    let steam_root = steam_root_from_registry();
+    #[cfg(target_os = "linux")]
+    let steam_root = steam_root_from_filesystem();
+    if let Some(steam_root) = steam_root {
         for library in library_roots(&steam_root) {
             let candidate = library
                 .join("steamapps")
@@ -73,7 +91,12 @@ pub fn find_tf2_root(explicit: Option<PathBuf>) -> Result<PathBuf> {
             }
         }
     }
+    #[cfg(target_os = "windows")]
     let fallback = PathBuf::from(r"C:\Program Files (x86)\Steam\steamapps\common\Team Fortress 2");
+    #[cfg(target_os = "linux")]
+    let fallback = std::env::var_os("HOME")
+        .map(|home| PathBuf::from(home).join(".local/share/Steam/steamapps/common/Team Fortress 2"))
+        .unwrap_or_default();
     if fallback.join("tf").join("steam.inf").is_file() {
         return validate_tf2_root(&fallback);
     }
@@ -87,16 +110,22 @@ fn validate_tf2_root(path: &Path) -> Result<PathBuf> {
             path.display()
         );
     }
-    if !path
-        .join("bin")
-        .join("x64")
-        .join("steam_api64.dll")
-        .is_file()
-    {
-        bail!("{} is missing bin/x64/steam_api64.dll", path.display());
+    let steam_api = steam_api_library(path);
+    if !steam_api.is_file() {
+        bail!("{} is missing {}", path.display(), steam_api.display());
     }
     path.canonicalize()
         .with_context(|| format!("could not resolve {}", path.display()))
+}
+
+#[cfg(target_os = "windows")]
+fn steam_api_library(tf2_root: &Path) -> PathBuf {
+    tf2_root.join("bin").join("x64").join("steam_api64.dll")
+}
+
+#[cfg(target_os = "linux")]
+fn steam_api_library(tf2_root: &Path) -> PathBuf {
+    tf2_root.join("bin").join("linux64").join("libsteam_api.so")
 }
 
 #[cfg(test)]
