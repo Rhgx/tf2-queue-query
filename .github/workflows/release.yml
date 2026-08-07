@@ -57,3 +57,50 @@ jobs:
             --draft `
             --title "TF2 Queue Query ${{ github.ref_name }}" `
             --generate-notes
+
+  linux-x64:
+    needs: windows-x64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve repository toolchain
+        run: rustup show
+      - name: Verify
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --all-targets --locked -- -D warnings
+          cargo test --all-targets --locked
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            version="${{ github.ref_name }}"
+            version="${version#v}"
+          else
+            version="${{ inputs.version }}"
+          fi
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+      - name: Build
+        run: cargo build --release --locked
+      - name: Package
+        run: |
+          set -euo pipefail
+          pkg="tf2-queue-query-v${{ steps.version.outputs.value }}-linux-x86_64"
+          mkdir -p "dist/$pkg"
+          cp target/release/tf2-queue-query "dist/$pkg/"
+          cp README.md LICENSE CHANGELOG.md "dist/$pkg/"
+          tar -C dist -czf "dist/$pkg.tar.gz" "$pkg"
+          sha256sum "dist/$pkg.tar.gz" > "dist/$pkg.tar.gz.sha256"
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tf2-queue-query-linux-x86_64
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+      - name: Attach to GitHub release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.ref_name }}" dist/*.tar.gz dist/*.sha256 --clobber
