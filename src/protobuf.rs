@@ -227,14 +227,14 @@ mod tests {
         reply.extend(region_group(&[]));
         reply.extend(region_group(&[("lhr", 0.001_25)]));
         assert_eq!(decode_map_counts(&reply).unwrap(), [4]);
-        let groups = decode_region_groups(&reply).unwrap();
-        assert_eq!(groups.len(), 3);
         assert_eq!(
-            groups[0],
-            [("fra".to_owned(), 0.5), ("maa2".to_owned(), 1.0)]
+            decode_region_groups(&reply).unwrap(),
+            [
+                vec![("fra".to_owned(), 0.5), ("maa2".to_owned(), 1.0)],
+                Vec::new(),
+                vec![("lhr".to_owned(), 0.001_25)],
+            ]
         );
-        assert!(groups[1].is_empty());
-        assert_eq!(groups[2][0].0, "lhr");
         assert!(decode_region_groups(&[0x12, 0x05, 0x0a]).is_err());
     }
 
