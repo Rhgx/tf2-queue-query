@@ -1,19 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 - 2026-10-31
 
-- Adds the approximate number of players searching per data center for Casual,
-  Mann Up, MvM Boot Camp, and Competitive, from the same stats reply. New
-  `regions` section and subcommand; data centers at TF2's limit of 800 are
-  marked `at_limit`.
-- Adds `casual_searching` and `casual_searching_is_minimum` to the summary.
-- CSV export writes a fourth file, `tf2-queue-regions.csv`, and two new summary
-  columns at the end.
-- If the data center part of a reply cannot be read, `regions` is `null` with
-  a warning; maps and modes still work.
-- New docs: `docs/output.md` (every field) and `docs/protocol.md` (how the
-  query works, including the unused event match group).
-- The packaging script now takes its version from `Cargo.toml` by default.
+- Experimental Linux x86_64 support, based on Kino-Cineaste's fork.
+- Approximate players searching per data center: `regions` in the JSON and
+  CSV, a `regions` subcommand, and `casual_searching` in the summary.
+- Documentation moved from the README into `docs/`.
+- Releases include a Linux `.tar.gz`, built by the release workflow, which
+  replaces the PowerShell packaging script.
 
 ## 0.1.0 - 2026-07-26
 

@@ -1,6 +1,6 @@
 # Output reference
 
-Running `tf2-queue-query.exe` with no subcommand prints one JSON object. The
+Running `tf2-queue-query` with no subcommand prints one JSON object. The
 `summary`, `maps`, `modes`, and `regions` subcommands print just that part.
 
 ```json
@@ -72,7 +72,7 @@ when the reply does not have the expected layout; see
 
 ## CSV files
 
-`tf2-queue-query.exe csv` writes four files with the same fields, each row
+`tf2-queue-query csv` writes four files with the same fields, each row
 starting with `captured_at`:
 
 | File | Rows |

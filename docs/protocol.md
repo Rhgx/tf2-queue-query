@@ -11,7 +11,8 @@ this tool's.
 
 ## Session
 
-1. Load TF2's own `bin/x64/steam_api64.dll` as app 440 and attach to the
+1. Load TF2's own Steam API library as app 440 (`bin/x64/steam_api64.dll` on
+   Windows, `bin/linux64/libsteam_api.so` on Linux) and attach to the
    signed-in desktop Steam session.
 2. Send `k_EMsgGCClientHello` (4006) every 2.5 seconds until the GC answers
    with `k_EMsgGCClientWelcome` (4004).

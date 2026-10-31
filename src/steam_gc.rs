@@ -21,6 +21,7 @@ use windows_sys::Win32::{
     System::LibraryLoader::SetDllDirectoryW,
 };
 
+use crate::discovery::steam_api_library;
 use crate::protobuf::{PROTO_MASK, body_from_packet, proto_packet, tf_client_init};
 
 const GC_CLIENT_WELCOME: u32 = 4004;
@@ -35,20 +36,10 @@ type SteamApiRunCallbacks = unsafe extern "C" fn();
 type SteamApiGetHSteamUser = unsafe extern "C" fn() -> i32;
 type SteamFindUserInterface = unsafe extern "C" fn(i32, *const c_char) -> *mut c_void;
 
-#[cfg(target_os = "windows")]
-type GcSendMessage = unsafe extern "system" fn(*mut c_void, u32, *const c_void, u32) -> i32;
-#[cfg(target_os = "linux")]
+// ISteamGameCoordinator methods take `this` first. On x86_64 both Windows and Linux use the
+// C calling convention for them ("system" only differs from "C" on 32-bit Windows).
 type GcSendMessage = unsafe extern "C" fn(*mut c_void, u32, *const c_void, u32) -> i32;
-
-#[cfg(target_os = "windows")]
-type GcIsMessageAvailable = unsafe extern "system" fn(*mut c_void, *mut u32) -> bool;
-#[cfg(target_os = "linux")]
 type GcIsMessageAvailable = unsafe extern "C" fn(*mut c_void, *mut u32) -> bool;
-
-#[cfg(target_os = "windows")]
-type GcRetrieveMessage =
-    unsafe extern "system" fn(*mut c_void, *mut u32, *mut c_void, u32, *mut u32) -> i32;
-#[cfg(target_os = "linux")]
 type GcRetrieveMessage =
     unsafe extern "C" fn(*mut c_void, *mut u32, *mut c_void, u32, *mut u32) -> i32;
 
@@ -85,10 +76,8 @@ fn symbol<T: Copy>(library: &Library, name: &[u8]) -> Result<T> {
         .with_context(|| format!("Steam export {} is missing", String::from_utf8_lossy(name)))
 }
 
-#[cfg(target_os = "windows")]
 fn load_api(tf2_root: &Path) -> Result<(SteamApi, SteamApiInit)> {
-    let bin = tf2_root.join("bin").join("x64");
-    let dll = bin.join("steam_api64.dll");
+    let path = steam_api_library(tf2_root);
     // These process-global settings are deliberately left in place: this is a
     // short-lived, single-purpose CLI that exits immediately after one query.
     // SAFETY: Modifying this process's environment occurs before worker threads
@@ -97,19 +86,15 @@ fn load_api(tf2_root: &Path) -> Result<(SteamApi, SteamApiInit)> {
         std::env::set_var("SteamAppId", "440");
         std::env::set_var("SteamGameId", "440");
     }
-    let mut wide_bin = bin.as_os_str().encode_wide().collect::<Vec<_>>();
-    wide_bin.push(0);
-    // SAFETY: The path is NUL-terminated and remains alive for the call. This
-    // mirrors the lookup behavior used by TF2's own loader for sibling DLLs.
-    // It intentionally remains set until this short-lived process exits.
-    if unsafe { SetDllDirectoryW(wide_bin.as_ptr()) } == 0 {
-        return Err(std::io::Error::last_os_error())
-            .context("could not set the TF2 DLL search directory");
-    }
+    #[cfg(target_os = "windows")]
+    use_tf2_dll_directory(
+        path.parent()
+            .context("Steam API path has no parent folder")?,
+    )?;
 
     // SAFETY: The path was validated as the installed TF2 Steam API library.
-    let library = unsafe { Library::new(&dll) }
-        .with_context(|| format!("could not load {}", dll.display()))?;
+    let library = unsafe { Library::new(&path) }
+        .with_context(|| format!("could not load {}", path.display()))?;
     let init = symbol::<SteamApiInit>(&library, b"SteamAPI_Init\0")?;
     let api = SteamApi {
         initialized: false,
@@ -122,45 +107,19 @@ fn load_api(tf2_root: &Path) -> Result<(SteamApi, SteamApiInit)> {
     Ok((api, init))
 }
 
-#[cfg(target_os = "linux")]
-fn load_api(tf2_root: &Path) -> Result<(SteamApi, SteamApiInit)> {
-    let bin = tf2_root.join("bin").join("linux64");
-    let so = bin.join("libsteam_api.so");
-    // These process-global settings are deliberately left in place: this is a
-    // short-lived, single-purpose CLI that exits immediately after one query.
-    // SAFETY: Modifying this process's environment occurs before worker threads
-    // are started and is required for SteamAPI to select app 440.
-    unsafe {
-        std::env::set_var("SteamAppId", "440");
-        std::env::set_var("SteamGameId", "440");
+/// Lets `steam_api64.dll` find the DLLs next to it, as TF2's own loader does. Linux needs no
+/// equivalent: `libsteam_api.so` loads Steam's own `steamclient.so`, not files from TF2.
+#[cfg(target_os = "windows")]
+fn use_tf2_dll_directory(bin: &Path) -> Result<()> {
+    let mut wide_bin = bin.as_os_str().encode_wide().collect::<Vec<_>>();
+    wide_bin.push(0);
+    // SAFETY: The path is NUL-terminated and remains alive for the call. It
+    // intentionally remains set until this short-lived process exits.
+    if unsafe { SetDllDirectoryW(wide_bin.as_ptr()) } == 0 {
+        return Err(std::io::Error::last_os_error())
+            .context("could not set the TF2 DLL search directory");
     }
-    // Make sibling libraries in the TF2 bin dir discoverable, mirroring the
-    // lookup behavior used by TF2's own loader. It intentionally remains set
-    // until this short-lived process exits.
-    let mut library_path = bin.as_os_str().to_os_string();
-    if let Some(existing) = std::env::var_os("LD_LIBRARY_PATH")
-        && !existing.is_empty()
-    {
-        library_path.push(":");
-        library_path.push(existing);
-    }
-    // SAFETY: Modifying this process's environment occurs before worker threads
-    // are started and is required for libsteam_api.so to find its siblings.
-    unsafe { std::env::set_var("LD_LIBRARY_PATH", library_path) };
-
-    // SAFETY: The path was validated as the installed TF2 Steam API library.
-    let library =
-        unsafe { Library::new(&so) }.with_context(|| format!("could not load {}", so.display()))?;
-    let init = symbol::<SteamApiInit>(&library, b"SteamAPI_Init\0")?;
-    let api = SteamApi {
-        initialized: false,
-        shutdown: symbol(&library, b"SteamAPI_Shutdown\0")?,
-        run_callbacks: symbol(&library, b"SteamAPI_RunCallbacks\0")?,
-        get_user: symbol(&library, b"SteamAPI_GetHSteamUser\0")?,
-        find_user_interface: symbol(&library, b"SteamInternal_FindOrCreateUserInterface\0")?,
-        _library: library,
-    };
-    Ok((api, init))
+    Ok(())
 }
 
 fn load_gc(api: &SteamApi) -> Result<GameCoordinator> {
@@ -304,18 +263,12 @@ pub fn tf2_is_running() -> bool {
 
 #[cfg(target_os = "linux")]
 pub fn tf2_is_running() -> bool {
-    // SAFETY: None. Scans /proc for the Linux TF2 client process name.
+    // Each running process has /proc/<pid>/comm with its executable name.
     let Ok(entries) = fs::read_dir("/proc") else {
         return false;
     };
     entries.filter_map(Result::ok).any(|entry| {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if !name.chars().all(|character| character.is_ascii_digit()) {
-            return false;
-        }
-        let comm = fs::read_to_string(entry.path().join("comm")).unwrap_or_default();
-        comm.trim() == "tf_linux64"
+        fs::read_to_string(entry.path().join("comm")).is_ok_and(|name| name.trim() == "tf_linux64")
     })
 }
 
