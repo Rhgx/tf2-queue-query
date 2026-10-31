@@ -10,225 +10,52 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use serde::Serialize;
 
 use crate::catalog::{MapDefinition, is_seasonal};
+use crate::regions::Regions;
 
-#[derive(Debug, Clone, Copy)]
 struct GameMode {
     id: &'static str,
     label: &'static str,
+    /// `rolling_match_tags` values that identify the mode.
+    tags: &'static [&'static str],
+    /// Map name prefix used when a map has no recognized tag.
+    prefix: Option<&'static str>,
 }
 
-const OTHER: GameMode = GameMode {
-    id: "other",
-    label: "Other",
-};
+const fn mode(
+    id: &'static str,
+    label: &'static str,
+    tags: &'static [&'static str],
+    prefix: Option<&'static str>,
+) -> GameMode {
+    GameMode {
+        id,
+        label,
+        tags,
+        prefix,
+    }
+}
 
-const TAG_MODES: &[(&[&str], GameMode)] = &[
-    (
-        &["payload_race", "plr"],
-        GameMode {
-            id: "payload-race",
-            label: "Payload Race",
-        },
-    ),
-    (
-        &["attack_defend", "attack-defend", "a/d"],
-        GameMode {
-            id: "attack-defend",
-            label: "Attack / Defend",
-        },
-    ),
-    (
-        &["king_of_the_hill", "king-of-the-hill", "koth"],
-        GameMode {
-            id: "king-of-the-hill",
-            label: "King of the Hill",
-        },
-    ),
-    (
-        &["capture_the_flag", "capture-the-flag", "ctf"],
-        GameMode {
-            id: "capture-the-flag",
-            label: "Capture the Flag",
-        },
-    ),
-    (
-        &["player_destruction", "player-destruction", "pd"],
-        GameMode {
-            id: "player-destruction",
-            label: "Player Destruction",
-        },
-    ),
-    (
-        &["robot_destruction", "robot-destruction", "rd"],
-        GameMode {
-            id: "robot-destruction",
-            label: "Robot Destruction",
-        },
-    ),
-    (
-        &["special_delivery", "special-delivery", "sd"],
-        GameMode {
-            id: "special-delivery",
-            label: "Special Delivery",
-        },
-    ),
-    (
-        &["territorial_control", "territorial-control", "tc"],
-        GameMode {
-            id: "territorial-control",
-            label: "Territorial Control",
-        },
-    ),
-    (
-        &["passtime", "pass_time", "pass"],
-        GameMode {
-            id: "passtime",
-            label: "PASS Time",
-        },
-    ),
-    (
-        &["versus_saxton_hale", "vsh"],
-        GameMode {
-            id: "versus-saxton-hale",
-            label: "Versus Saxton Hale",
-        },
-    ),
-    (
-        &["zombie_infection", "zi"],
-        GameMode {
-            id: "zombie-infection",
-            label: "Zombie Infection",
-        },
-    ),
-    (
-        &["mann_vs_machine", "mvm"],
-        GameMode {
-            id: "mann-vs-machine",
-            label: "Mann vs. Machine",
-        },
-    ),
-    (
-        &["payload", "pl"],
-        GameMode {
-            id: "payload",
-            label: "Payload",
-        },
-    ),
-    (
-        &["arena"],
-        GameMode {
-            id: "arena",
-            label: "Arena",
-        },
-    ),
-    (
-        &["control_point", "control-point", "cp"],
-        GameMode {
-            id: "control-point",
-            label: "Control Point",
-        },
-    ),
-];
+const OTHER: GameMode = mode("other", "Other", &[], None);
 
-const PREFIX_MODES: &[(&str, GameMode)] = &[
-    (
-        "plr_",
-        GameMode {
-            id: "payload-race",
-            label: "Payload Race",
-        },
-    ),
-    (
-        "pl_",
-        GameMode {
-            id: "payload",
-            label: "Payload",
-        },
-    ),
-    (
-        "koth_",
-        GameMode {
-            id: "king-of-the-hill",
-            label: "King of the Hill",
-        },
-    ),
-    (
-        "ctf_",
-        GameMode {
-            id: "capture-the-flag",
-            label: "Capture the Flag",
-        },
-    ),
-    (
-        "arena_",
-        GameMode {
-            id: "arena",
-            label: "Arena",
-        },
-    ),
-    (
-        "pd_",
-        GameMode {
-            id: "player-destruction",
-            label: "Player Destruction",
-        },
-    ),
-    (
-        "rd_",
-        GameMode {
-            id: "robot-destruction",
-            label: "Robot Destruction",
-        },
-    ),
-    (
-        "sd_",
-        GameMode {
-            id: "special-delivery",
-            label: "Special Delivery",
-        },
-    ),
-    (
-        "tc_",
-        GameMode {
-            id: "territorial-control",
-            label: "Territorial Control",
-        },
-    ),
-    (
-        "pass_",
-        GameMode {
-            id: "passtime",
-            label: "PASS Time",
-        },
-    ),
-    (
-        "vsh_",
-        GameMode {
-            id: "versus-saxton-hale",
-            label: "Versus Saxton Hale",
-        },
-    ),
-    (
-        "zi_",
-        GameMode {
-            id: "zombie-infection",
-            label: "Zombie Infection",
-        },
-    ),
-    (
-        "mvm_",
-        GameMode {
-            id: "mann-vs-machine",
-            label: "Mann vs. Machine",
-        },
-    ),
-    (
-        "cp_",
-        GameMode {
-            id: "control-point",
-            label: "Control Point",
-        },
-    ),
+// Checked in order, tags first and then prefixes, so the more specific mode wins
+// (Payload Race before Payload) and the order matches earlier releases.
+#[rustfmt::skip]
+const MODES: &[GameMode] = &[
+    mode("payload-race", "Payload Race", &["payload_race", "plr"], Some("plr_")),
+    mode("attack-defend", "Attack / Defend", &["attack_defend", "attack-defend", "a/d"], None),
+    mode("king-of-the-hill", "King of the Hill", &["king_of_the_hill", "king-of-the-hill", "koth"], Some("koth_")),
+    mode("capture-the-flag", "Capture the Flag", &["capture_the_flag", "capture-the-flag", "ctf"], Some("ctf_")),
+    mode("player-destruction", "Player Destruction", &["player_destruction", "player-destruction", "pd"], Some("pd_")),
+    mode("robot-destruction", "Robot Destruction", &["robot_destruction", "robot-destruction", "rd"], Some("rd_")),
+    mode("special-delivery", "Special Delivery", &["special_delivery", "special-delivery", "sd"], Some("sd_")),
+    mode("territorial-control", "Territorial Control", &["territorial_control", "territorial-control", "tc"], Some("tc_")),
+    mode("passtime", "PASS Time", &["passtime", "pass_time", "pass"], Some("pass_")),
+    mode("versus-saxton-hale", "Versus Saxton Hale", &["versus_saxton_hale", "vsh"], Some("vsh_")),
+    mode("zombie-infection", "Zombie Infection", &["zombie_infection", "zi"], Some("zi_")),
+    mode("mann-vs-machine", "Mann vs. Machine", &["mann_vs_machine", "mvm"], Some("mvm_")),
+    mode("payload", "Payload", &["payload", "pl"], Some("pl_")),
+    mode("arena", "Arena", &["arena"], Some("arena_")),
+    mode("control-point", "Control Point", &["control_point", "control-point", "cp"], Some("cp_")),
 ];
 
 #[derive(Debug, Clone, Serialize)]
@@ -262,6 +89,10 @@ pub struct Summary {
     pub eligible_maps: usize,
     pub busiest_map: Option<String>,
     pub busiest_map_searching: u32,
+    /// Approximate players searching in Casual across data centers; null without data center numbers.
+    pub casual_searching: Option<u32>,
+    /// True when a data center is at its limit, so `casual_searching` is a minimum.
+    pub casual_searching_is_minimum: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -270,22 +101,24 @@ pub struct Snapshot {
     pub summary: Summary,
     pub maps: Vec<MapStat>,
     pub modes: Vec<ModeStat>,
+    pub regions: Option<Regions>,
 }
 
-fn game_mode(map: &MapDefinition) -> GameMode {
-    for (candidates, mode) in TAG_MODES {
-        if candidates
-            .iter()
-            .any(|candidate| map.tags.iter().any(|tag| tag == candidate))
-        {
-            return *mode;
-        }
-    }
+fn game_mode(map: &MapDefinition) -> &'static GameMode {
     let lower = map.name.to_ascii_lowercase();
-    PREFIX_MODES
+    MODES
         .iter()
-        .find_map(|(prefix, mode)| lower.starts_with(prefix).then_some(*mode))
-        .unwrap_or(OTHER)
+        .find(|mode| {
+            mode.tags
+                .iter()
+                .any(|candidate| map.tags.iter().any(|tag| tag == candidate))
+        })
+        .or_else(|| {
+            MODES
+                .iter()
+                .find(|mode| mode.prefix.is_some_and(|prefix| lower.starts_with(prefix)))
+        })
+        .unwrap_or(&OTHER)
 }
 
 fn display_name(map_name: &str) -> String {
@@ -344,6 +177,7 @@ fn rounded_percent(numerator: u64, denominator: u64) -> f64 {
 pub fn build_snapshot(
     catalogue: &[MapDefinition],
     counts: &[u32],
+    regions: Option<Regions>,
     captured_at: DateTime<Utc>,
 ) -> Snapshot {
     let captured_at = captured_at.to_rfc3339_opts(SecondsFormat::Millis, true);
@@ -410,6 +244,7 @@ pub fn build_snapshot(
             .then_with(|| left.game_mode.cmp(&right.game_mode))
     });
     let busiest = maps.first().filter(|map| map.searching > 0);
+    let casual = regions.as_ref().map(|regions| &regions.casual);
     Snapshot {
         captured_at,
         summary: Summary {
@@ -418,9 +253,13 @@ pub fn build_snapshot(
             eligible_maps: maps.iter().filter(|map| map.queue_eligible).count(),
             busiest_map: busiest.map(|map| map.display_name.clone()),
             busiest_map_searching: busiest.map_or(0, |map| map.searching),
+            casual_searching: casual.map(|stats| stats.iter().map(|stat| stat.searching).sum()),
+            casual_searching_is_minimum: casual
+                .is_some_and(|stats| stats.iter().any(|stat| stat.at_limit)),
         },
         maps,
         modes,
+        regions,
     }
 }
 
@@ -452,7 +291,7 @@ fn write_csv(
 
 pub struct CsvResult {
     pub directory: PathBuf,
-    pub files: [PathBuf; 3],
+    pub files: [PathBuf; 4],
 }
 
 #[allow(clippy::too_many_lines)]
@@ -479,6 +318,7 @@ pub fn write_csv_files(
         directory.join(format!("{prefix}-summary{suffix}.csv")),
         directory.join(format!("{prefix}-maps{suffix}.csv")),
         directory.join(format!("{prefix}-modes{suffix}.csv")),
+        directory.join(format!("{prefix}-regions{suffix}.csv")),
     ];
 
     write_csv(&files[0], |writer| {
@@ -489,6 +329,8 @@ pub fn write_csv_files(
             "eligible_maps",
             "busiest_map",
             "busiest_map_searching",
+            "casual_searching",
+            "casual_searching_is_minimum",
         ])?;
         writer.write_record([
             snapshot.captured_at.as_str(),
@@ -497,6 +339,11 @@ pub fn write_csv_files(
             &snapshot.summary.eligible_maps.to_string(),
             snapshot.summary.busiest_map.as_deref().unwrap_or(""),
             &snapshot.summary.busiest_map_searching.to_string(),
+            &snapshot
+                .summary
+                .casual_searching
+                .map_or_else(String::new, |value| value.to_string()),
+            &snapshot.summary.casual_searching_is_minimum.to_string(),
         ])?;
         Ok(())
     })?;
@@ -552,6 +399,32 @@ pub fn write_csv_files(
         }
         Ok(())
     })?;
+    // Header only when the reply had no data center numbers, so the file set stays the same.
+    write_csv(&files[3], |writer| {
+        writer.write_record([
+            "captured_at",
+            "matchmaking",
+            "data_center",
+            "city",
+            "country",
+            "searching",
+            "at_limit",
+        ])?;
+        for (matchmaking, stats) in snapshot.regions.iter().flat_map(Regions::groups) {
+            for stat in stats {
+                writer.write_record([
+                    snapshot.captured_at.as_str(),
+                    matchmaking,
+                    stat.data_center.as_str(),
+                    stat.city.as_deref().unwrap_or(""),
+                    stat.country.as_deref().unwrap_or(""),
+                    &stat.searching.to_string(),
+                    &stat.at_limit.to_string(),
+                ])?;
+            }
+        }
+        Ok(())
+    })?;
     Ok(CsvResult { directory, files })
 }
 
@@ -568,6 +441,16 @@ mod tests {
                 queue_eligible: true,
             }],
             &[0, 42],
+            crate::regions::build_regions(&[
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                vec![("fra".to_owned(), 1.0), ("lhr".to_owned(), 0.5)],
+            ]),
             DateTime::parse_from_rfc3339("2026-07-26T12:00:00Z")
                 .unwrap()
                 .to_utc(),
@@ -580,6 +463,8 @@ mod tests {
         assert_eq!(snapshot.summary.total_map_selections, 42);
         assert_eq!(snapshot.maps[0].display_name, "Badwater");
         assert_eq!(snapshot.modes[0].game_mode_id, "payload");
+        assert_eq!(snapshot.summary.casual_searching, Some(1200));
+        assert!(snapshot.summary.casual_searching_is_minimum);
     }
 
     #[test]
@@ -612,5 +497,30 @@ mod tests {
             queue_eligible: false,
         };
         assert_eq!(game_mode(&map).id, "capture-the-flag");
+    }
+
+    #[test]
+    fn prefers_tags_then_the_more_specific_mode() {
+        let map = |name: &str, tags: &[&str]| MapDefinition {
+            index: 1,
+            name: name.to_owned(),
+            tags: tags.iter().map(|tag| (*tag).to_owned()).collect(),
+            queue_eligible: true,
+        };
+        assert_eq!(game_mode(&map("plr_hightower", &[])).id, "payload-race");
+        assert_eq!(game_mode(&map("pl_upward", &[])).id, "payload");
+        assert_eq!(
+            game_mode(&map("pl_x", &["payload", "payload_race"])).id,
+            "payload-race"
+        );
+        assert_eq!(
+            game_mode(&map("koth_x", &["control_point"])).id,
+            "control-point"
+        );
+        assert_eq!(
+            game_mode(&map("cp_dustbowl", &["attack_defend", "cp"])).id,
+            "attack-defend"
+        );
+        assert_eq!(game_mode(&map("tr_walkway", &[])).id, "other");
     }
 }

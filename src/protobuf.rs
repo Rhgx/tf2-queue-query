@@ -81,7 +81,7 @@ fn skip_field(bytes: &[u8], wire_type: u64, offset: &mut usize) -> Result<()> {
     Ok(())
 }
 
-/// Decode GC message 6525's packed or legacy-unpacked `map_count` field.
+/// Decode `CMsgGCMatchMakerStatsResponse.map_count` (field 1), packed or legacy-unpacked.
 pub fn decode_map_counts(bytes: &[u8]) -> Result<Vec<u32>> {
     let mut counts = Vec::new();
     let mut offset = 0;
@@ -119,6 +119,71 @@ pub fn decode_map_counts(bytes: &[u8]) -> Result<Vec<u32>> {
     Ok(counts)
 }
 
+fn read_bytes<'a>(bytes: &'a [u8], offset: &mut usize) -> Result<&'a [u8]> {
+    let length =
+        usize::try_from(read_varint(bytes, offset)?).context("protobuf field is too large")?;
+    let end = offset
+        .checked_add(length)
+        .context("protobuf offset overflow")?;
+    let value = bytes
+        .get(*offset..end)
+        .context("truncated protobuf field")?;
+    *offset = end;
+    Ok(value)
+}
+
+/// One `CMsgGCDataCenterPopulation`: `name` (field 1) and `health_ratio` (field 2, a float).
+fn decode_region_entry(bytes: &[u8]) -> Result<Option<(String, f32)>> {
+    let mut code = None;
+    let mut health_ratio = None;
+    let mut offset = 0;
+    while offset < bytes.len() {
+        let tag = read_varint(bytes, &mut offset)?;
+        match (tag >> 3, tag & 7) {
+            (1, 2) => {
+                code = Some(String::from_utf8_lossy(read_bytes(bytes, &mut offset)?).into_owned());
+            }
+            (2, 5) => {
+                let value = bytes
+                    .get(offset..offset + 4)
+                    .context("truncated protobuf float")?;
+                health_ratio = Some(f32::from_le_bytes(value.try_into().expect("four bytes")));
+                offset += 4;
+            }
+            (_, wire_type) => skip_field(bytes, wire_type, &mut offset)?,
+        }
+    }
+    Ok(code.zip(health_ratio))
+}
+
+/// Decode `CMsgGCMatchMakerStatsResponse.matchgroup_data_center_population` (field 2): one group
+/// per TF2 match group, each a list of (data center, health ratio) entries. Entries missing either
+/// value are left out.
+pub fn decode_region_groups(bytes: &[u8]) -> Result<Vec<Vec<(String, f32)>>> {
+    let mut groups = Vec::new();
+    let mut offset = 0;
+    while offset < bytes.len() {
+        let tag = read_varint(bytes, &mut offset)?;
+        if tag != (2 << 3 | 2) {
+            skip_field(bytes, tag & 7, &mut offset)?;
+            continue;
+        }
+        let group = read_bytes(bytes, &mut offset)?;
+        let mut entries = Vec::new();
+        let mut inner = 0;
+        while inner < group.len() {
+            let entry_tag = read_varint(group, &mut inner)?;
+            if entry_tag == (1 << 3 | 2) {
+                entries.extend(decode_region_entry(read_bytes(group, &mut inner)?)?);
+            } else {
+                skip_field(group, entry_tag & 7, &mut inner)?;
+            }
+        }
+        groups.push(entries);
+    }
+    Ok(groups)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,6 +202,40 @@ mod tests {
             decode_map_counts(&[0x10, 0x07, 0x08, 0x04, 0x08, 0x05]).unwrap(),
             [4, 5]
         );
+    }
+
+    /// A field 2 group as TF2 sends it: entries of { 1: name, 2: float health ratio }.
+    fn region_group(entries: &[(&str, f32)]) -> Vec<u8> {
+        let mut body = Vec::new();
+        for (code, health_ratio) in entries {
+            let mut entry = vec![0x0a, u8::try_from(code.len()).unwrap()];
+            entry.extend_from_slice(code.as_bytes());
+            entry.push(0x15);
+            entry.extend_from_slice(&health_ratio.to_le_bytes());
+            body.extend_from_slice(&[0x0a, u8::try_from(entry.len()).unwrap()]);
+            body.extend(entry);
+        }
+        let mut group = vec![0x12, u8::try_from(body.len()).unwrap()];
+        group.extend(body);
+        group
+    }
+
+    #[test]
+    fn decodes_region_groups_beside_map_counts() {
+        let mut reply = vec![0x08, 0x04];
+        reply.extend(region_group(&[("fra", 0.5), ("maa2", 1.0)]));
+        reply.extend(region_group(&[]));
+        reply.extend(region_group(&[("lhr", 0.001_25)]));
+        assert_eq!(decode_map_counts(&reply).unwrap(), [4]);
+        let groups = decode_region_groups(&reply).unwrap();
+        assert_eq!(groups.len(), 3);
+        assert_eq!(
+            groups[0],
+            [("fra".to_owned(), 0.5), ("maa2".to_owned(), 1.0)]
+        );
+        assert!(groups[1].is_empty());
+        assert_eq!(groups[2][0].0, "lhr");
+        assert!(decode_region_groups(&[0x12, 0x05, 0x0a]).is_err());
     }
 
     #[test]

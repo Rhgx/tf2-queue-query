@@ -1,5 +1,6 @@
+# Version defaults to the one in Cargo.toml; passing it checks that the two agree.
 param(
-    [string]$Version = "0.1.0",
+    [string]$Version,
     [switch]$SkipBuild
 )
 
@@ -7,19 +8,22 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $DistDirectory = Join-Path $ProjectRoot "dist"
 $Executable = Join-Path $ProjectRoot "target\release\tf2-queue-query.exe"
-$PackageName = "tf2-queue-query-v$Version-windows-x86_64"
-$StageDirectory = Join-Path $DistDirectory $PackageName
-$Archive = Join-Path $DistDirectory "$PackageName.zip"
-$Checksum = "$Archive.sha256"
 
 $Metadata = cargo metadata --no-deps --format-version 1 --manifest-path (Join-Path $ProjectRoot "Cargo.toml") | ConvertFrom-Json
 if ($LASTEXITCODE -ne 0) {
     throw "cargo metadata failed"
 }
 $ManifestVersion = $Metadata.packages[0].version
+if (-not $Version) {
+    $Version = $ManifestVersion
+}
 if ($Version -ne $ManifestVersion) {
     throw "Requested package version $Version does not match Cargo.toml version $ManifestVersion"
 }
+$PackageName = "tf2-queue-query-v$Version-windows-x86_64"
+$StageDirectory = Join-Path $DistDirectory $PackageName
+$Archive = Join-Path $DistDirectory "$PackageName.zip"
+$Checksum = "$Archive.sha256"
 
 if (-not $SkipBuild) {
     cargo build --release --locked --manifest-path (Join-Path $ProjectRoot "Cargo.toml")

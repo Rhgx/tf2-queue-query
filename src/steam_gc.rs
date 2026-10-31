@@ -243,7 +243,8 @@ pub fn tf2_is_running() -> bool {
     }
 }
 
-pub fn request_map_counts(tf2_root: &Path, timeout: Duration) -> Result<Vec<u32>> {
+/// Sends one passive stats request and returns the raw message 6525 body.
+pub fn request_stats(tf2_root: &Path, timeout: Duration) -> Result<Vec<u8>> {
     let version = client_version(tf2_root)?;
     let (mut api, init) = load_api(tf2_root)?;
     // SAFETY: Function pointer is valid while `api` retains the library.
@@ -272,7 +273,7 @@ pub fn request_map_counts(tf2_root: &Path, timeout: Duration) -> Result<Vec<u32>
             if message_type == GC_CLIENT_WELCOME {
                 welcomed = true;
             } else if message_type == MATCHMAKER_STATS_RESPONSE {
-                return crate::protobuf::decode_map_counts(body_from_packet(raw_type, &packet));
+                return Ok(body_from_packet(raw_type, &packet).to_vec());
             }
         }
         if welcomed && !init_sent {

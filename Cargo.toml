@@ -2,7 +2,7 @@
 name = "tf2-queue-query"
 version = "0.1.0"
 edition = "2024"
-description = "Query TF2's passive matchmaking map-selection statistics"
+description = "Query TF2's passive matchmaking map-selection and data center statistics"
 authors = ["Rhgx"]
 license = "MIT"
 repository = "https://github.com/Rhgx/tf2-queue-query"

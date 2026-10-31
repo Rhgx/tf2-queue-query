@@ -1,6 +1,7 @@
 # TF2 Queue Query
 
-A small Windows CLI that reads TF2's current matchmaking map-selection stats.
+A small Windows CLI that reads TF2's current matchmaking map-selection stats
+and the approximate number of players searching per data center.
 It prints JSON, so you can read it directly, pipe it into `jq`, or use it from
 another program.
 
@@ -31,7 +32,8 @@ Download and extract the zip from
 .\tf2-queue-query.exe
 ```
 
-That returns a JSON snapshot containing the summary, maps, and game modes.
+That returns a JSON snapshot containing the summary, maps, game modes, and data
+centers.
 
 You can ask for one part:
 
@@ -39,6 +41,7 @@ You can ask for one part:
 .\tf2-queue-query.exe summary
 .\tf2-queue-query.exe maps
 .\tf2-queue-query.exe modes
+.\tf2-queue-query.exe regions
 ```
 
 A map entry looks like this:
@@ -54,7 +57,29 @@ A map entry looks like this:
 }
 ```
 
-The real entry contains a few more fields.
+The real entry contains a few more fields. Every field is described in
+[docs/output.md](https://github.com/Rhgx/tf2-queue-query/blob/main/docs/output.md).
+
+## Data centers
+
+`regions` lists the approximate number of players searching in each data center
+for Casual, Mann Up, MvM Boot Camp, and Competitive, busiest first:
+
+```json
+{
+  "data_center": "fra",
+  "city": "Frankfurt",
+  "country": "de",
+  "searching": 800,
+  "at_limit": true
+}
+```
+
+TF2 stops counting at 800 per data center, so `"at_limit": true` means at least
+800, and totals that include such a data center are minimums. These numbers are
+this tool's reading of a value TF2 does not explain; see
+[docs/protocol.md](https://github.com/Rhgx/tf2-queue-query/blob/main/docs/protocol.md)
+for how they are worked out and why there is no "event" queue.
 
 ## Pipes
 
@@ -68,6 +93,12 @@ Show maps that currently have selections:
 
 ```powershell
 .\tf2-queue-query.exe maps | jq '.[] | select(.searching > 0) | {map: .display_name, searching}'
+```
+
+Show Casual data centers at their limit:
+
+```powershell
+.\tf2-queue-query.exe regions | jq '.casual[] | select(.at_limit) | .city'
 ```
 
 Get one map:
@@ -86,8 +117,8 @@ CSV is optional:
 .\tf2-queue-query.exe csv
 ```
 
-This writes summary, map, and game-mode files under a timestamped `csv-data`
-folder. Run `tf2-queue-query.exe csv --help` for output and filename options.
+This writes summary, map, game-mode, and data center files under a timestamped
+`csv-data` folder. Run `tf2-queue-query.exe csv --help` for output and filename options.
 
 ## If something goes wrong
 
@@ -96,6 +127,8 @@ folder. Run `tf2-queue-query.exe csv --help` for output and filename options.
   in.
 - **TF2 was not found:** pass its folder with `--tf2-root`.
 - **GC timeout:** close other TF2 observer tools and retry with `--timeout 60`.
+- **`regions` is null:** the reply did not have the expected data center
+  layout, so only maps and modes are shown. A warning says why.
 - **SmartScreen warning:** the executable is not code-signed. The release also
   includes a SHA-256 checksum.
 
@@ -113,7 +146,8 @@ cargo build --release
 .\scripts\package-release.ps1
 ```
 
-The packaging script puts the zip and checksum in `dist/`.
+The packaging script uses the version in `Cargo.toml` and puts the zip and
+checksum in `dist/`.
 
 ## License
 

@@ -8,6 +8,7 @@ mod catalog;
 mod discovery;
 mod export;
 mod protobuf;
+mod regions;
 mod steam_gc;
 
 use std::{fs, path::PathBuf, process::ExitCode, time::Duration};
@@ -47,7 +48,9 @@ enum Command {
     Modes,
     /// Print only the summary statistics as JSON.
     Summary,
-    /// Write summary, map, and mode CSV files instead of JSON.
+    /// Print only the approximate number searching per data center as JSON.
+    Regions,
+    /// Write summary, map, mode, and data center CSV files instead of JSON.
     Csv(CsvOptions),
 }
 
@@ -57,7 +60,7 @@ struct CsvOptions {
     #[arg(long, default_value = "csv-data")]
     out: PathBuf,
 
-    /// Prefix used for all three CSV filenames.
+    /// Prefix used for all CSV filenames.
     #[arg(long, default_value = "tf2-queue", value_parser = valid_prefix)]
     prefix: String,
 
@@ -97,8 +100,30 @@ fn capture(cli: &Cli) -> Result<export::Snapshot> {
         .with_context(|| format!("could not read {}", items_game_path.display()))?;
     let catalogue = catalog::parse_master_maps_list(&items_game)?;
     eprintln!("Requesting one passive matchmaking-stat snapshot from Steam GC...");
-    let counts = steam_gc::request_map_counts(&tf2_root, Duration::from_secs(cli.timeout))?;
-    Ok(export::build_snapshot(&catalogue, &counts, Utc::now()))
+    let body = steam_gc::request_stats(&tf2_root, Duration::from_secs(cli.timeout))?;
+    let counts = protobuf::decode_map_counts(&body)?;
+    // Data center numbers are extra; if they cannot be read, the map counts are still returned.
+    let regions = match protobuf::decode_region_groups(&body) {
+        Ok(groups) => {
+            let regions = regions::build_regions(&groups);
+            if regions.is_none() {
+                eprintln!(
+                    "warning: data center numbers were not in the expected layout; regions is null"
+                );
+            }
+            regions
+        }
+        Err(error) => {
+            eprintln!("warning: could not read data center numbers: {error:#}; regions is null");
+            None
+        }
+    };
+    Ok(export::build_snapshot(
+        &catalogue,
+        &counts,
+        regions,
+        Utc::now(),
+    ))
 }
 
 fn validate_cli(cli: &Cli) -> Result<()> {
@@ -117,6 +142,10 @@ fn run() -> Result<()> {
         Some(Command::Maps) => export::write_json(&snapshot.maps, cli.compact),
         Some(Command::Modes) => export::write_json(&snapshot.modes, cli.compact),
         Some(Command::Summary) => export::write_json(&snapshot.summary, cli.compact),
+        Some(Command::Regions) => match &snapshot.regions {
+            Some(regions) => export::write_json(regions, cli.compact),
+            None => bail!("the TF2 GC reply did not include data center numbers"),
+        },
         Some(Command::Csv(options)) => {
             let result =
                 export::write_csv_files(&snapshot, &options.out, &options.prefix, options.flat)?;
@@ -124,9 +153,12 @@ fn run() -> Result<()> {
                 println!("{}", file.display());
             }
             eprintln!(
-                "Wrote {} maps and {} modes to {}.",
+                "Wrote {} maps, {} modes and {} data center rows to {}.",
                 snapshot.maps.len(),
                 snapshot.modes.len(),
+                snapshot.regions.as_ref().map_or(0, |regions| {
+                    regions.groups().iter().map(|(_, stats)| stats.len()).sum()
+                }),
                 result.directory.display()
             );
             Ok(())
