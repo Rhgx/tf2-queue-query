@@ -2,7 +2,8 @@
 
 ## 0.2.0 - 2026-10-31
 
-- Experimental Linux x86_64 support, based on Kino-Cineaste's fork.
+- Experimental Linux x86_64 support, based on
+  [Kino-Cineaste's fork](https://github.com/Kino-Cineaste/tf2-queue-query).
 - Approximate players searching per data center: `regions` in the JSON and
   CSV, a `regions` subcommand, and `casual_searching` in the summary.
 - Documentation moved from the README into `docs/`.

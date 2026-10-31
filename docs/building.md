@@ -26,16 +26,19 @@ cargo clippy --all-targets --locked --target x86_64-unknown-linux-gnu -- -D warn
 
 ## Releasing
 
-1. Set the new version in `Cargo.toml` and add it to `CHANGELOG.md`.
-2. Commit, then tag the commit with the same version, for example `v0.2.0`,
-   and push the tag.
-3. The Release workflow checks that the tag matches `Cargo.toml`, builds both
+1. Set the new version in `Cargo.toml`, run `cargo build` so `Cargo.lock`
+   picks it up, and add the version to `CHANGELOG.md`.
+2. Run the checks above. They use `--locked`, as the workflow does, so they
+   fail if `Cargo.lock` was not updated.
+3. Commit `Cargo.toml`, `Cargo.lock`, and `CHANGELOG.md`, then tag the commit
+   with the same version, for example `v0.2.0`, and push the tag.
+4. The Release workflow checks that the tag matches `Cargo.toml`, builds both
    platforms, and creates a draft GitHub release with
    `tf2-queue-query-v<version>-windows-x86_64.zip`,
    `tf2-queue-query-v<version>-linux-x86_64.tar.gz`, and a `.sha256` file for
    each. Each archive contains the program, `README.md`, `LICENSE`,
    `CHANGELOG.md`, and `docs/`.
-4. Review the draft and publish it.
+5. Review the draft and publish it.
 
-Running the Release workflow by hand builds the same archives as workflow
-artifacts without creating a release.
+Running the Release workflow by hand, on any branch or tag, builds the same
+archives as workflow artifacts without creating a release.
