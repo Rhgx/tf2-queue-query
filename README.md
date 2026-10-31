@@ -5,6 +5,8 @@ matchmaking map-selection stats and the approximate number of players
 searching per data center. It prints JSON, so you can read it directly, pipe
 it into `jq`, or use it from another program.
 
+The same query powers <a href="https://queue.tf-servers.com"><img src="docs/images/tf-servers.png" alt="" width="16" height="16" align="absmiddle"></a> <a href="https://queue.tf-servers.com"><b>queue.tf-servers.com</b></a>, a live view of these numbers.
+
 It uses your existing desktop Steam session. It never asks for your password,
 Steam Guard code, token, or Web API key.
 
